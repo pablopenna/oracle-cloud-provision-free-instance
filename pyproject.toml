@@ -1,0 +1,12 @@
+[project]
+name = "oracle-cloud-provision-free-instance"
+version = "0.1.0"
+description = "Single-shot launcher for Oracle Cloud Always Free instances (A1.Flex / E2.1.Micro)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "oci>=2.126",
+]
+
+[tool.uv]
+# Keep the virtualenv inside the project folder so everything is self-contained.

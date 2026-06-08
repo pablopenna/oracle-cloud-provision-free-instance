@@ -1,0 +1,15 @@
+# Local virtualenv (deps installed in-folder via uv)
+.venv/
+
+# uv lock is safe to commit; keep it. Cache is not.
+.uv-cache/
+
+# Your real config + any secrets must never be committed
+config.toml
+.oci/
+*.pem
+*.key
+
+# Python noise
+__pycache__/
+*.pyc

@@ -1,0 +1,61 @@
+# Copy this file to `config.toml` and fill in your values.
+# `config.toml` is git-ignored so your OCIDs never get committed.
+
+# --- OCI authentication -------------------------------------------------------
+# Path to the OCI SDK/CLI config file (the snippet the OCI Console gives you when
+# you create an API key).
+#
+# This is an OPTIONAL override. If the file isn't at the path below, the script
+# auto-searches these locations in order and uses the first that exists:
+#   1. this oci_config_file path
+#   2. ./.oci/config (in the repo, git-ignored)
+#   3. ~/.oci/config
+# So if you place the config at any standard spot, you can leave this as-is.
+# Only change it to point at a non-standard location.
+oci_config_file = "~/.oci/config"
+oci_profile     = "DEFAULT"
+
+# Optional: override the region from the config file. Leave empty to use the
+# region defined in the OCI config above. Example: "eu-frankfurt-1".
+region = ""
+
+# --- Where the instance goes --------------------------------------------------
+# OPTIONAL. Leave empty to use your tenancy (= the root compartment), which is
+# read automatically from the OCI API key config. Only set this if you want a
+# specific sub-compartment. Find under Identity & Security > Compartments.
+compartment_id = ""
+
+# OPTIONAL. Leave empty and the script will reuse an existing subnet that has
+# public internet access, or create the whole network stack for you (VCN +
+# internet gateway + route + a regional public subnet). Only set this to pin a
+# specific subnet OCID.
+subnet_id = ""
+
+# Public IP so you can SSH in afterwards.
+assign_public_ip = true
+
+# --- Login key + naming -------------------------------------------------------
+# Dedicated key for these instances. If the public key file does not exist, the
+# script generates an ed25519 keypair at this path automatically.
+ssh_public_key_file = "~/.ssh/oracle_cloud_free_vm.pub"
+display_name_prefix = "free"
+
+# --- Image selection ----------------------------------------------------------
+# The newest image matching this OS (and version, if set) compatible with each
+# shape is picked automatically. aarch64 vs x86_64 is handled per-shape by OCI.
+image_operating_system         = "Canonical Ubuntu"
+image_operating_system_version = "24.04"   # set "" to take the newest of that OS
+
+# --- Shapes to attempt, in order ----------------------------------------------
+# The script tries each shape (A1.Flex first) across every availability domain,
+# one attempt each, then stops on the first successful launch.
+# A1.Flex is a "Flex" shape, so it needs ocpus + memory_in_gbs.
+# Always Free A1 budget total: 4 OCPUs and 24 GB across all your A1 instances.
+[[shapes]]
+name          = "VM.Standard.A1.Flex"
+ocpus         = 4
+memory_in_gbs = 24
+
+# E2.1.Micro is a fixed shape (no ocpus/memory needed).
+[[shapes]]
+name = "VM.Standard.E2.1.Micro"
