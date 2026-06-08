@@ -1,0 +1,45 @@
+name: provision-free-instance
+
+# Runs the launcher on a schedule. Capacity for the Always Free shapes frees up
+# sporadically, so this keeps trying daily until an instance is created. Once one
+# exists, the script's skip_if_instance_exists check makes each run a no-op.
+on:
+  schedule:
+    - cron: "0 3 * * *"   # daily ~03:00 UTC (GitHub may delay scheduled runs)
+  workflow_dispatch: {}    # allow manual runs from the Actions tab
+
+# Never let two runs overlap.
+concurrency:
+  group: provision-free-instance
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Write OCI credentials from secrets
+        env:
+          OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          mkdir -p .oci
+          printf '%s\n' "$OCI_CONFIG" > .oci/config
+          printf '%s\n' "$OCI_PRIVATE_KEY" > .oci/oci_api_key.pem
+          chmod 600 .oci/oci_api_key.pem
+
+      - name: Attempt to launch an instance
+        run: |
+          set +e
+          uv run provision.py
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "::notice::Instance launched -- check the OCI Console." ;;
+            2) echo "::notice::No capacity this run; will retry on the next schedule." ;;
+            *) echo "::error::provision.py failed (exit $rc)"; exit "$rc" ;;
+          esac

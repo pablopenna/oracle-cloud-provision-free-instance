@@ -127,12 +127,46 @@ ssh -i ~/.ssh/oracle_cloud_free_vm ubuntu@<public-ip>
 
 Exit codes: `0` launched, `2` no capacity / nothing launched, `1` configuration error.
 
-## Scheduling (optional)
+## Scheduling
 
-To keep trying automatically, add a cron entry, e.g. every 15 minutes:
+The script doesn't loop on its own — schedule repeated runs instead. Once an
+instance exists, `skip_if_instance_exists = true` (default) makes every later run
+a no-op, so it's safe to leave the schedule on.
+
+### Option A — local cron
 
 ```cron
-*/15 * * * * cd /home/pablo/code/oracle-cloud-provision-free-instance && uv run provision.py >> run.log 2>&1
+0 3 * * * cd /home/pablo/code/oracle-cloud-provision-free-instance && uv run provision.py >> run.log 2>&1
 ```
 
-(Remove it once you've got your instance — you only get a limited free quota.)
+### Option B — GitHub Actions (runs in the cloud)
+
+A ready-to-use workflow lives at `.github/workflows/provision.yml`. It runs daily
+(`cron: "0 3 * * *"`, also triggerable manually from the **Actions** tab) and
+treats "out of capacity" as a clean run, so you're only notified on success.
+
+**Setup (one time):**
+
+1. Push this repo to GitHub. The committed `oracle_cloud_free_vm.pub` is your
+   public SSH key (not secret) — the workflow needs no SSH secret.
+2. In the repo: **Settings → Secrets and variables → Actions → New repository
+   secret**, and add two secrets:
+
+   | Secret name | Contents |
+   | --- | --- |
+   | `OCI_CONFIG` | the full text of your `.oci/config` (keep `key_file=oci_api_key.pem`) |
+   | `OCI_PRIVATE_KEY` | the full text of your private API key `.pem` |
+
+   The workflow writes these to `.oci/config` and `.oci/oci_api_key.pem` at
+   runtime. `config.toml` isn't committed, so CI runs on `config.example.toml`'s
+   defaults (which point at the committed public key).
+
+**Notes:**
+
+- GitHub's scheduler has a 5-minute minimum and often delays scheduled runs by
+  10–30+ min — fine for a daily attempt, not for tight polling.
+- Scheduled workflows are **auto-disabled after 60 days** with no repo activity;
+  a manual run or commit re-arms them.
+- These secrets carry full API access (an admin key, if that's what you used), so
+  anyone with write access to the repo could exfiltrate them. Use a throwaway
+  tenancy or a scoped IAM user if that matters to you.

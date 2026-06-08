@@ -35,10 +35,18 @@ subnet_id = ""
 assign_public_ip = true
 
 # --- Login key + naming -------------------------------------------------------
-# Dedicated key for these instances. If the public key file does not exist, the
-# script generates an ed25519 keypair at this path automatically.
-ssh_public_key_file = "~/.ssh/oracle_cloud_free_vm.pub"
+# Public SSH key injected into the instance at launch (you log in with the
+# matching private key). A *public* key is not secret, so this one is committed
+# in the repo -- which also lets it work in CI with no secret. A relative path is
+# resolved against the project folder. If the file does not exist, the script
+# generates an ed25519 keypair at this path automatically.
+ssh_public_key_file = "oracle_cloud_free_vm.pub"
 display_name_prefix = "free"
+
+# Abort instead of launching if a live instance of one of the shapes below
+# already exists. Keeps scheduled/repeated runs from creating duplicates once
+# you've succeeded. Set to false to always attempt a launch.
+skip_if_instance_exists = true
 
 # --- Image selection ----------------------------------------------------------
 # The newest image matching this OS (and version, if set) compatible with each

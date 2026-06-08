@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -105,6 +106,10 @@ def build_oci_config(cfg_file: Path, profile: str, region_override: str) -> dict
 def ensure_ssh_public_key(pub_key_file: str) -> str:
     """Return the public key text, generating an ed25519 keypair if missing."""
     pub_path = expand(pub_key_file)
+    if not pub_path.is_absolute():
+        # A relative path (e.g. a public key committed in the repo) is resolved
+        # against the project folder, not the current working directory.
+        pub_path = PROJECT_DIR / pub_path
     if pub_path.exists():
         return pub_path.read_text().strip()
 
@@ -131,6 +136,15 @@ def ensure_ssh_public_key(pub_key_file: str) -> str:
     except subprocess.CalledProcessError as exc:
         fail(f"ssh-keygen failed: {exc.stderr.strip()}")
     print(f"[ssh] Created {priv_path} and {pub_path}")
+
+    # Mirror the public key into the project folder so it can be committed and
+    # used by the GitHub Actions workflow (a public key is not secret). The
+    # private key stays put -- only the .pub is copied.
+    repo_pub = PROJECT_DIR / pub_path.name
+    if pub_path != repo_pub:
+        shutil.copy(pub_path, repo_pub)
+        print(f"[ssh] Copied public key into the repo: {repo_pub.name} (commit it for CI)")
+
     return pub_path.read_text().strip()
 
 
@@ -153,6 +167,19 @@ def find_newest_image(compute, compartment_id, shape, os_name, os_version):
 def is_capacity_error(exc: oci.exceptions.ServiceError) -> bool:
     msg = (exc.message or "").lower()
     return "out of host capacity" in msg or "out of capacity" in msg
+
+
+def find_existing_instance(compute, compartment_id, shape_names):
+    """Return a live instance of one of the target shapes, or None.
+
+    Used to avoid launching another instance once we've already succeeded.
+    Terminated/terminating instances are ignored (they free up the quota).
+    """
+    dead = {"TERMINATED", "TERMINATING"}
+    for inst in compute.list_instances(compartment_id=compartment_id).data:
+        if inst.lifecycle_state not in dead and inst.shape in shape_names:
+            return inst
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -288,6 +315,26 @@ def main() -> None:
     compute = oci.core.ComputeClient(config)
     network = oci.core.VirtualNetworkClient(config)
 
+    shapes = user_cfg.get("shapes", [])
+    if not shapes:
+        fail("No [[shapes]] defined in config.")
+    shape_names = {s["name"] for s in shapes}
+
+    # Don't launch another instance once we already have one (enabled by default).
+    # Runs before any networking so scheduled runs become cheap no-ops post-success.
+    if bool(user_cfg.get("skip_if_instance_exists", True)):
+        existing = find_existing_instance(compute, compartment_id, shape_names)
+        if existing is not None:
+            print(
+                f"\n[skip] A target-shape instance already exists -- not launching.\n"
+                f"       name:  {existing.display_name}\n"
+                f"       shape: {existing.shape}\n"
+                f"       state: {existing.lifecycle_state}\n"
+                f"       id:    {existing.id}\n"
+                f"       (Set skip_if_instance_exists = false in config.toml to override.)"
+            )
+            return
+
     # Resolve (or auto-create) a subnet with public internet access.
     subnet = ensure_subnet(network, compartment_id, user_cfg.get("subnet_id", "").strip())
     subnet_id = subnet.id
@@ -305,9 +352,6 @@ def main() -> None:
     os_version = user_cfg.get("image_operating_system_version", "")
     prefix = user_cfg.get("display_name_prefix", "free")
     assign_public_ip = bool(user_cfg.get("assign_public_ip", True))
-    shapes = user_cfg.get("shapes", [])
-    if not shapes:
-        fail("No [[shapes]] defined in config.toml")
 
     attempts: list[tuple[str, str, str]] = []  # (shape, ad, outcome)
 
