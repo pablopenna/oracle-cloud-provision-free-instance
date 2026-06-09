@@ -169,17 +169,20 @@ def is_capacity_error(exc: oci.exceptions.ServiceError) -> bool:
     return "out of host capacity" in msg or "out of capacity" in msg
 
 
-def find_existing_instance(compute, compartment_id, shape_names):
-    """Return a live instance of one of the target shapes, or None.
+def find_existing_instances(compute, compartment_id, shape_names):
+    """Map each target shape to a live instance of that shape, if one exists.
 
-    Used to avoid launching another instance once we've already succeeded.
-    Terminated/terminating instances are ignored (they free up the quota).
+    Used to avoid launching a second instance of a shape we already have, while
+    still allowing other shapes to be attempted. Terminated/terminating
+    instances are ignored (they free up the quota).
     """
     dead = {"TERMINATED", "TERMINATING"}
+    found: dict[str, object] = {}
     for inst in compute.list_instances(compartment_id=compartment_id).data:
-        if inst.lifecycle_state not in dead and inst.shape in shape_names:
-            return inst
-    return None
+        if inst.lifecycle_state in dead or inst.shape not in shape_names:
+            continue
+        found.setdefault(inst.shape, inst)
+    return found
 
 
 # --------------------------------------------------------------------------- #
@@ -320,19 +323,24 @@ def main() -> None:
         fail("No [[shapes]] defined in config.")
     shape_names = {s["name"] for s in shapes}
 
-    # Don't launch another instance once we already have one (enabled by default).
-    # Runs before any networking so scheduled runs become cheap no-ops post-success.
+    # Don't launch a second instance of a shape we already have (enabled by
+    # default). This is per-shape: an existing A1 won't block an E2 attempt and
+    # vice versa. Runs before any networking so a fully-provisioned account
+    # makes scheduled runs cheap no-ops.
+    skip_shapes: set[str] = set()
     if bool(user_cfg.get("skip_if_instance_exists", True)):
-        existing = find_existing_instance(compute, compartment_id, shape_names)
-        if existing is not None:
+        existing_by_shape = find_existing_instances(compute, compartment_id, shape_names)
+        for shape, inst in existing_by_shape.items():
+            skip_shapes.add(shape)
             print(
-                f"\n[skip] A target-shape instance already exists -- not launching.\n"
-                f"       name:  {existing.display_name}\n"
-                f"       shape: {existing.shape}\n"
-                f"       state: {existing.lifecycle_state}\n"
-                f"       id:    {existing.id}\n"
+                f"\n[skip] {shape} already exists -- not launching another.\n"
+                f"       name:  {inst.display_name}\n"
+                f"       state: {inst.lifecycle_state}\n"
+                f"       id:    {inst.id}\n"
                 f"       (Set skip_if_instance_exists = false in config.toml to override.)"
             )
+        if skip_shapes >= shape_names:
+            print("\n[skip] All target shapes already exist -- nothing to do.")
             return
 
     # Resolve (or auto-create) a subnet with public internet access.
@@ -357,6 +365,9 @@ def main() -> None:
 
     for shape_cfg in shapes:
         shape = shape_cfg["name"]
+        if shape in skip_shapes:
+            attempts.append((shape, "-", "already exists -- skipped"))
+            continue
         image = find_newest_image(compute, compartment_id, shape, os_name, os_version)
         if image is None:
             os_label = f"{os_name} {os_version}".strip()
